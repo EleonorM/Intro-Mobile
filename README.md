@@ -1,4 +1,4 @@
 # Intro-Mobile
-Eleonor Mbala Kibasisa -
+Eleonor Mbala Kibasisa 
 
 Ertugrul Taha Yazici
