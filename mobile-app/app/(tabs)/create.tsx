@@ -17,6 +17,20 @@ import { Ionicons } from '@expo/vector-icons';
 const DAYS = ['Zo', 'Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dec'];
 
+// Geeft true als het tijdslot vandaag al voorbij is.
+// Als de gekozen datum in de toekomst ligt, is het altijd false.
+function isSlotPast(date: Date, time: string): boolean {
+  const now = new Date();
+  const isToday =
+    date.getDate() === now.getDate() &&
+    date.getMonth() === now.getMonth() &&
+    date.getFullYear() === now.getFullYear();
+  if (!isToday) return false;
+  const [hours, minutes] = time.split(':').map(Number);
+  const slotTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+  return slotTime <= now;
+}
+
 const HANDLE_SIZE = 28;
 
 function snap(val: number, levelMin: number, levelMax: number, levelStep: number) {
@@ -441,25 +455,28 @@ export default function CreateScreen() {
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 24 }}>
                 {timeSlots.map((time) => {
                   const isBooked = bookedSlots.includes(time);
+                  const isPast = isSlotPast(selectedDate!, time);
+                  const isDisabled = isBooked || isPast;
                   const isSelected = selectedTime === time;
                   return (
                     <TouchableOpacity
                       key={time}
-                      onPress={() => !isBooked && setSelectedTime(time)}
-                      disabled={isBooked}
+                      onPress={() => !isDisabled && setSelectedTime(time)}
+                      disabled={isDisabled}
                       style={{
                         paddingHorizontal: 18,
                         paddingVertical: 14,
                         borderRadius: 12,
-                        backgroundColor: isBooked ? '#141420' : isSelected ? '#00d4aa' : '#1a1a2e',
+                        backgroundColor: isDisabled ? '#141420' : isSelected ? '#00d4aa' : '#1a1a2e',
                         minWidth: '28%',
                         alignItems: 'center',
                         borderWidth: 1,
-                        borderColor: isSelected ? '#00d4aa' : isBooked ? '#1a1a2e' : '#1e1e3a',
+                        borderColor: isSelected ? '#00d4aa' : isDisabled ? '#1a1a2e' : '#1e1e3a',
                       }}
                     >
-                      <Text style={{ color: isBooked ? '#333' : 'white', fontWeight: '600' }}>{time}</Text>
+                      <Text style={{ color: isDisabled ? '#333' : 'white', fontWeight: '600' }}>{time}</Text>
                       {isBooked && <Text style={{ color: '#333', fontSize: 10, marginTop: 2 }}>Bezet</Text>}
+                      {isPast && !isBooked && <Text style={{ color: '#333', fontSize: 10, marginTop: 2 }}>Voorbij</Text>}
                     </TouchableOpacity>
                   );
                 })}

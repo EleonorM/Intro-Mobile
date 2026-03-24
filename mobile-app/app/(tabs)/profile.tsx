@@ -17,90 +17,85 @@
 
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useEffect, useState, useRef } from 'react';
-import { signOut, onAuthStateChanged } from 'firebase/auth';  // onAuthStateChanged = luisteraar voor login-status
+import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function ProfileScreen() {
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [myMatches, setMyMatches] = useState<any[]>([]);
+  const [myBookings, setMyBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // useRef om de huidige ingelogde gebruiker bij te houden.
-  // We gebruiken hier geen useState voor de user, want we willen
-  // de user-waarde ook kunnen lezen in cleanup-functies zonder
-  // dat React opnieuw rendert.
-  const [currentUser, setCurrentUser] = useState<any>(null);
-
-  // unsubscribeRef = een verwijzing naar de "stop-functie" van onSnapshot.
-  // We bewaren hem in een ref zodat we hem later (bij uitloggen) kunnen oproepen.
-  // Als we hem niet stoppen, blijft Firebase data proberen op te halen
-  // ook als de gebruiker al uitgelogd is → "permission-denied" error.
+  // Stop-functies voor de Firestore luisteraars bewaren we in refs,
+  // zodat we ze kunnen aanroepen bij uitloggen (anders: permission-denied).
   const unsubscribeMatchesRef = useRef<(() => void) | null>(null);
+  const unsubscribeBookingsRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    // onAuthStateChanged luistert naar veranderingen in de login-status.
-    // - user != null → iemand is ingelogd
-    // - user == null → niemand ingelogd (ook na uitloggen)
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
 
       if (user) {
-        // Gebruiker is ingelogd: start de Firestore luisteraar
-        const q = query(
+        // Luister naar wedstrijden van deze gebruiker
+        const matchQuery = query(
           collection(db, 'matches'),
           where('createdBy', '==', user.uid)
-          // Geen orderBy om een Firestore composite index te vermijden.
-          // We sorteren zelf hieronder (client-side).
         );
-
-        // Sla de stop-functie op in de ref zodat we hem later kunnen oproepen
-        unsubscribeMatchesRef.current = onSnapshot(q, (snapshot) => {
+        unsubscribeMatchesRef.current = onSnapshot(matchQuery, (snapshot) => {
           const data = snapshot.docs
             .map((doc) => ({ id: doc.id, ...doc.data() }))
             .sort((a: any, b: any) => {
-              // toMillis() zet een Firestore Timestamp om naar milliseconden (getal)
-              // zodat we kunnen vergelijken welke groter (= nieuwer) is
               const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
               const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
-              return bTime - aTime; // nieuwste eerst
+              return bTime - aTime;
             });
           setMyMatches(data);
           setLoading(false);
         });
+
+        // Luister naar veld-boekingen van deze gebruiker
+        const bookingQuery = query(
+          collection(db, 'bookings'),
+          where('userId', '==', user.uid)
+        );
+        unsubscribeBookingsRef.current = onSnapshot(bookingQuery, (snapshot) => {
+          const data = snapshot.docs
+            .map((doc) => ({ id: doc.id, ...doc.data() }))
+            .sort((a: any, b: any) => {
+              const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+              const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+              return bTime - aTime;
+            });
+          setMyBookings(data);
+        });
       } else {
-        // Gebruiker is uitgelogd: stop de Firestore luisteraar onmiddellijk
-        // zodat Firebase geen "permission-denied" gooit
-        if (unsubscribeMatchesRef.current) {
-          unsubscribeMatchesRef.current(); // roept de stop-functie aan
-          unsubscribeMatchesRef.current = null;
-        }
+        // Uitgelogd: stop beide luisteraars
+        unsubscribeMatchesRef.current?.();
+        unsubscribeMatchesRef.current = null;
+        unsubscribeBookingsRef.current?.();
+        unsubscribeBookingsRef.current = null;
         setMyMatches([]);
+        setMyBookings([]);
         setLoading(false);
       }
     });
 
-    // Wanneer de component van het scherm verdwijnt, stoppen we BEIDE luisteraars:
-    // 1. de auth-luisteraar
-    // 2. de Firestore-luisteraar (als die nog actief is)
     return () => {
       unsubscribeAuth();
-      if (unsubscribeMatchesRef.current) {
-        unsubscribeMatchesRef.current();
-        unsubscribeMatchesRef.current = null;
-      }
+      unsubscribeMatchesRef.current?.();
+      unsubscribeBookingsRef.current?.();
     };
-  }, []); // lege array [] = dit effect loopt alleen bij het eerste laden van de component
+  }, []);
 
   const handleLogout = async () => {
-    // Stop de Firestore luisteraar EERST, dan pas uitloggen.
-    // Volgorde is belangrijk: als we eerst uitloggen, trekt Firebase
-    // de rechten in terwijl onSnapshot nog actief is → permission-denied.
-    if (unsubscribeMatchesRef.current) {
-      unsubscribeMatchesRef.current();
-      unsubscribeMatchesRef.current = null;
-    }
+    // Stop luisteraars EERST, dan uitloggen (anders: permission-denied)
+    unsubscribeMatchesRef.current?.();
+    unsubscribeMatchesRef.current = null;
+    unsubscribeBookingsRef.current?.();
+    unsubscribeBookingsRef.current = null;
     await signOut(auth);
     router.replace('/');
   };
@@ -220,6 +215,62 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           ))
         )}
+
+        {/* ── MIJN BOEKINGEN ─────────────────────────────────────── */}
+        <View style={{ marginTop: 32 }}>
+          <Text style={{ color: '#888', fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 14 }}>
+            Mijn veld-boekingen
+          </Text>
+
+          {myBookings.length === 0 ? (
+            <View style={{
+              backgroundColor: '#1a1a2e',
+              borderRadius: 14,
+              padding: 24,
+              alignItems: 'center',
+              borderWidth: 1,
+              borderColor: '#1e1e3a',
+            }}>
+              <Ionicons name="calendar-outline" size={36} color="#333" />
+              <Text style={{ color: '#555', marginTop: 12, fontSize: 14 }}>
+                Je hebt nog geen velden geboekt
+              </Text>
+            </View>
+          ) : (
+            myBookings.map((booking) => (
+              <View
+                key={booking.id}
+                style={{
+                  backgroundColor: '#1a1a2e',
+                  borderRadius: 14,
+                  padding: 16,
+                  marginBottom: 12,
+                  borderWidth: 1,
+                  borderColor: '#1e1e3a',
+                }}
+              >
+                {/* Datum + tijd */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <Ionicons name="calendar-outline" size={13} color="#00d4aa" />
+                  <Text style={{ color: 'white', fontWeight: '700', fontSize: 14 }}>
+                    {booking.date}  {booking.time}
+                  </Text>
+                </View>
+
+                {/* Club */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 8 }}>
+                  <Ionicons name="location-outline" size={12} color="#666" />
+                  <Text style={{ color: '#888', fontSize: 13 }}>{booking.clubName}</Text>
+                </View>
+
+                {/* Bedrag */}
+                <View style={{ backgroundColor: '#0d2b25', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 20, alignSelf: 'flex-start' }}>
+                  <Text style={{ color: '#00d4aa', fontSize: 11, fontWeight: '600' }}>€15,00 betaald</Text>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
 
         {/* ── ACCOUNT / UITLOGGEN ────────────────────────────────── */}
         <View style={{ marginTop: 32 }}>

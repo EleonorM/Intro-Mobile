@@ -30,14 +30,23 @@ import {
   onSnapshot,
   updateDoc,
   arrayUnion,
-  arrayRemove,   // arrayRemove = verwijder een waarde uit een Firestore array
-  deleteDoc,     // deleteDoc = verwijder een heel document uit Firestore
+  arrayRemove,
+  deleteDoc,
   collection,
   addDoc,
   orderBy,
   query,
 } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../../config/firebase';
+
+// Geeft true als de wedstrijddatum én het uur al voorbij zijn
+function isExpired(date: string, time: string): boolean {
+  const [day, month, year] = date.split('/').map(Number);
+  const [hours, minutes] = time.split(':').map(Number);
+  const matchDate = new Date(year, month - 1, day, hours, minutes);
+  return matchDate < new Date();
+}
 import { Ionicons } from '@expo/vector-icons';
 
 export default function MatchDetail() {
@@ -58,36 +67,45 @@ export default function MatchDetail() {
   // auth.currentUser = de ingelogde gebruiker (of null als niemand ingelogd is)
   const user = auth.currentUser;
 
-  // ── EFFECT 1: Luister naar de wedstrijd in realtime ──────────────────────
-  // useEffect voert code uit wanneer de component laadt (of wanneer [id] verandert).
-  // onSnapshot = Firebase luistert live naar het document. Als iemand anders
-  // de wedstrijd aanpast, update het scherm automatisch.
+  // ── EFFECT: Start luisteraars alleen als de gebruiker ingelogd is ─────────
+  // Zo vermijden we "permission-denied" fouten van Firebase wanneer
+  // de gebruiker niet (meer) ingelogd is.
   useEffect(() => {
-    const unsubscribe = onSnapshot(doc(db, 'matches', id as string), (docSnap) => {
-      setMatch({ id: docSnap.id, ...docSnap.data() });
-      setLoading(false);
-    });
-    // De return-functie wordt aangeroepen wanneer de gebruiker het scherm verlaat.
-    // Zo stoppen we de Firebase luisteraar om geheugen te besparen.
-    return () => unsubscribe();
-  }, [id]);
+    let unsubscribeMatch: (() => void) | null = null;
+    let unsubscribeMessages: (() => void) | null = null;
 
-  // ── EFFECT 2: Luister naar chatberichten in realtime ─────────────────────
-  useEffect(() => {
-    const q = query(
-      collection(db, 'matches', id as string, 'messages'),
-      orderBy('createdAt', 'asc') // oudste berichten eerst
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setMessages(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        // Luister naar de wedstrijd in realtime
+        unsubscribeMatch = onSnapshot(doc(db, 'matches', id as string), (docSnap) => {
+          if (docSnap.exists()) {
+            setMatch({ id: docSnap.id, ...docSnap.data() });
+          }
+          setLoading(false);
+        });
 
-      // Scroll automatisch naar het laatste bericht na een korte vertraging.
-      // setTimeout wacht 100ms zodat React het scherm eerst kan hertekenen.
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 100);
+        // Luister naar chatberichten in realtime
+        const q = query(
+          collection(db, 'matches', id as string, 'messages'),
+          orderBy('createdAt', 'asc')
+        );
+        unsubscribeMessages = onSnapshot(q, (snapshot) => {
+          setMessages(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+          setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+        });
+      } else {
+        // Niet ingelogd: stop luisteraars en ga terug
+        unsubscribeMatch?.();
+        unsubscribeMessages?.();
+        router.replace('/(tabs)/matches');
+      }
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubscribeAuth();
+      unsubscribeMatch?.();
+      unsubscribeMessages?.();
+    };
   }, [id]);
 
   // ── FUNCTIE: Inschrijven ─────────────────────────────────────────────────
@@ -226,6 +244,9 @@ export default function MatchDetail() {
   const isJoined = match?.players?.includes(user?.uid);           // is de gebruiker ingeschreven?
   const isCreator = match?.createdBy === user?.uid;               // is de gebruiker de maker?
   const freePlaces = (match?.maxPlayers ?? 0) - (match?.players?.length ?? 0); // hoeveel vrije plekken?
+  const isFull = freePlaces <= 0;                                 // is de wedstrijd vol?
+  const isPast = match ? isExpired(match.date, match.time) : false; // is het uur al voorbij?
+  const canJoin = !isJoined && !isFull && !isPast;                // mag de gebruiker inschrijven?
 
   return (
     // KeyboardAvoidingView: wanneer het toetsenbord opent, schuift alles hierboven omhoog.
@@ -336,19 +357,25 @@ export default function MatchDetail() {
           </View>
 
           {/* Actieknop: afhankelijk van de situatie tonen we een andere knop */}
-          {!isJoined ? (
-            // GEVAL 1: Nog niet ingeschreven → toon "Inschrijven" knop
+          {isPast ? (
+            // Wedstrijd is al voorbij
+            <View style={{ backgroundColor: '#1e1e3a', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12 }}>
+              <Text style={{ color: '#555', fontWeight: '700', fontSize: 13 }}>Verlopen</Text>
+            </View>
+          ) : !isJoined ? (
+            // GEVAL 1: Nog niet ingeschreven → toon "Inschrijven" knop (grijs als vol)
             <TouchableOpacity
-              onPress={handleJoin}
+              onPress={canJoin ? handleJoin : undefined}
+              disabled={!canJoin}
               style={{
-                backgroundColor: '#00d4aa',
+                backgroundColor: canJoin ? '#00d4aa' : '#1e1e3a',
                 paddingHorizontal: 18,
                 paddingVertical: 10,
                 borderRadius: 12,
               }}
             >
-              <Text style={{ color: 'white', fontWeight: '700', fontSize: 14 }}>
-                Inschrijven  €5
+              <Text style={{ color: canJoin ? 'white' : '#555', fontWeight: '700', fontSize: 14 }}>
+                {isFull ? 'Vol' : 'Inschrijven  €5'}
               </Text>
             </TouchableOpacity>
           ) : isCreator ? (

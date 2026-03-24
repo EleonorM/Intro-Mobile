@@ -1,6 +1,6 @@
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useEffect, useState, useMemo, useRef } from 'react';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
 // onAuthStateChanged = luisteraar die reageert op inloggen én uitloggen
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../../config/firebase';
@@ -11,6 +11,15 @@ type SortKey = 'datum' | 'spelers';
 type FilterStatus = 'alle' | 'open' | 'vol';
 type FilterFormat = 'alle' | '5v5' | '7v7' | '11v11';
 type FilterType = 'alle' | 'competitief' | 'vriendelijk';
+
+// Geeft true als de wedstrijddatum én het uur al voorbij zijn.
+// Datumformaat in Firestore: "DD/MM/YYYY", tijdformaat: "HH:MM"
+function isExpired(date: string, time: string): boolean {
+  const [day, month, year] = date.split('/').map(Number);
+  const [hours, minutes] = time.split(':').map(Number);
+  const matchDate = new Date(year, month - 1, day, hours, minutes);
+  return matchDate < new Date();
+}
 
 function FilterChip({
   label,
@@ -65,8 +74,19 @@ export default function MatchesScreen() {
         // Gebruiker is ingelogd: start de Firestore luisteraar voor alle wedstrijden
         const q = query(collection(db, 'matches'), orderBy('createdAt', 'desc'));
         unsubscribeMatchesRef.current = onSnapshot(q, (snapshot) => {
-          const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-          setMatches(data);
+          const active: any[] = [];
+
+          snapshot.docs.forEach((d) => {
+            const match = { id: d.id, ...d.data() } as any;
+            if (isExpired(match.date, match.time)) {
+              // Verwijder verlopen wedstrijden uit Firebase
+              deleteDoc(doc(db, 'matches', d.id));
+            } else {
+              active.push(match);
+            }
+          });
+
+          setMatches(active);
           setLoading(false);
         });
       } else {
@@ -248,11 +268,13 @@ export default function MatchesScreen() {
           ) : (
             filteredMatches.map((match) => {
               const freePlaces = (match.maxPlayers ?? 0) - (match.players?.length ?? 0);
+              const isFull = freePlaces <= 0;
               return (
                 <TouchableOpacity
                   key={match.id}
                   onPress={() => router.push(`/match/${match.id}`)}
-                  activeOpacity={0.85}
+                  activeOpacity={isFull ? 1 : 0.85}
+                  disabled={isFull}
                   style={{
                     backgroundColor: '#1a1a2e',
                     borderRadius: 16,
@@ -260,6 +282,7 @@ export default function MatchesScreen() {
                     marginBottom: 14,
                     borderWidth: 1,
                     borderColor: '#1e1e3a',
+                    opacity: isFull ? 0.45 : 1,
                   }}
                 >
                   {/* Bovenste rij: datum + status badge */}
