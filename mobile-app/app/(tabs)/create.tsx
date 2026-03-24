@@ -9,46 +9,40 @@ import {
   LayoutChangeEvent,
 } from 'react-native';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../config/firebase';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-const CLUBS = [
-  { id: '1', name: 'Sporthal Antwerpen', address: 'Antwerpen Centrum' },
-  { id: '2', name: 'Voetbalclub Berchem', address: 'Berchem, Antwerpen' },
-  { id: '3', name: 'FC Deurne', address: 'Deurne, Antwerpen' },
-  { id: '4', name: 'Sportcomplex Wilrijk', address: 'Wilrijk, Antwerpen' },
-];
-
-const TIME_SLOTS = ['17:00', '18:00', '19:00', '20:00', '21:00', '22:00'];
 const DAYS = ['Zo', 'Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dec'];
 
-const LEVEL_MIN = 0.5;
-const LEVEL_MAX = 7.0;
-const LEVEL_STEP = 0.5;
 const HANDLE_SIZE = 28;
 
-// Snap a value to the nearest 0.5 step
-function snap(val: number) {
-  const steps = Math.round((val - LEVEL_MIN) / LEVEL_STEP);
-  return Math.min(LEVEL_MAX, Math.max(LEVEL_MIN, LEVEL_MIN + steps * LEVEL_STEP));
+function snap(val: number, levelMin: number, levelMax: number, levelStep: number) {
+  const steps = Math.round((val - levelMin) / levelStep);
+  return Math.min(levelMax, Math.max(levelMin, levelMin + steps * levelStep));
 }
 
 function RangeSlider({
   minVal,
   maxVal,
+  levelMin,
+  levelMax,
+  levelStep,
   onChange,
 }: {
   minVal: number;
   maxVal: number;
+  levelMin: number;
+  levelMax: number;
+  levelStep: number;
   onChange: (min: number, max: number) => void;
 }) {
   const sliderWidth = useRef(0);
 
-  const toPercent = (v: number) => (v - LEVEL_MIN) / (LEVEL_MAX - LEVEL_MIN);
-  const fromPercent = (p: number) => snap(LEVEL_MIN + p * (LEVEL_MAX - LEVEL_MIN));
+  const toPercent = (v: number) => (v - levelMin) / (levelMax - levelMin);
+  const fromPercent = (p: number) => snap(levelMin + p * (levelMax - levelMin), levelMin, levelMax, levelStep);
 
   const minPanResponder = useRef(
     PanResponder.create({
@@ -57,7 +51,7 @@ function RangeSlider({
       onPanResponderMove: (_, gs) => {
         if (sliderWidth.current === 0) return;
         const pct = (gs.moveX - HANDLE_SIZE / 2) / sliderWidth.current;
-        const clamped = Math.max(0, Math.min(toPercent(maxVal) - LEVEL_STEP / (LEVEL_MAX - LEVEL_MIN), pct));
+        const clamped = Math.max(0, Math.min(toPercent(maxVal) - levelStep / (levelMax - levelMin), pct));
         onChange(fromPercent(clamped), maxVal);
       },
     })
@@ -70,7 +64,7 @@ function RangeSlider({
       onPanResponderMove: (_, gs) => {
         if (sliderWidth.current === 0) return;
         const pct = (gs.moveX - HANDLE_SIZE / 2) / sliderWidth.current;
-        const clamped = Math.min(1, Math.max(toPercent(minVal) + LEVEL_STEP / (LEVEL_MAX - LEVEL_MIN), pct));
+        const clamped = Math.min(1, Math.max(toPercent(minVal) + levelStep / (levelMax - levelMin), pct));
         onChange(minVal, fromPercent(clamped));
       },
     })
@@ -155,8 +149,8 @@ function RangeSlider({
 
       {/* Min/max labels */}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
-        <Text style={{ color: '#444', fontSize: 11 }}>0.5</Text>
-        <Text style={{ color: '#444', fontSize: 11 }}>7.0</Text>
+        <Text style={{ color: '#444', fontSize: 11 }}>{levelMin.toFixed(1)}</Text>
+        <Text style={{ color: '#444', fontSize: 11 }}>{levelMax.toFixed(1)}</Text>
       </View>
     </View>
   );
@@ -176,6 +170,42 @@ export default function CreateScreen() {
   const [isCompetitive, setIsCompetitive] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Data uit Firebase
+  const [clubs, setClubs] = useState<any[]>([]);
+  const [timeSlots, setTimeSlots] = useState<string[]>([]);
+  const [formats, setFormats] = useState<string[]>([]);
+  const [levelMin, setLevelMin] = useState(0.5);
+  const [levelMax, setLevelMax] = useState(7.0);
+  const [levelStep, setLevelStep] = useState(0.5);
+  const [loadingConfig, setLoadingConfig] = useState(true);
+
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const clubsSnapshot = await getDocs(collection(db, 'clubs'));
+        const clubsList = clubsSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        clubsList.sort((a: any, b: any) => a.id.localeCompare(b.id));
+        setClubs(clubsList);
+
+        const configSnap = await getDoc(doc(db, 'appConfig', 'settings'));
+        if (configSnap.exists()) {
+          const cfg = configSnap.data();
+          setTimeSlots(cfg.timeSlots ?? []);
+          setFormats(cfg.formats ?? []);
+          setLevelMin(cfg.levelMin ?? 0.5);
+          setLevelMax(cfg.levelMax ?? 7.0);
+          setLevelStep(cfg.levelStep ?? 0.5);
+          setFormat(cfg.formats?.[0] ?? '5v5');
+        }
+      } catch (err: any) {
+        Alert.alert('Fout', 'Kon configuratie niet laden: ' + err.message);
+      } finally {
+        setLoadingConfig(false);
+      }
+    };
+    fetchConfig();
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       setStep(1);
@@ -184,13 +214,14 @@ export default function CreateScreen() {
       setSelectedTime(null);
       setMinLevel(1.5);
       setMaxLevel(3.0);
-      setFormat('5v5');
+      setFormat(formats[0] ?? '5v5');
       setIsMixed(false);
       setIsCompetitive(false);
-    }, [])
+    }, [formats])
   );
 
-  const maxPlayers = format === '5v5' ? 10 : format === '7v7' ? 14 : 22;
+  const formatMaxPlayers: Record<string, number> = { '5v5': 10, '7v7': 14, '11v11': 22 };
+  const maxPlayers = formatMaxPlayers[format] ?? 10;
 
   const getDates = () => {
     const dates = [];
@@ -284,6 +315,14 @@ export default function CreateScreen() {
     setLoading(false);
   };
 
+  if (loadingConfig) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#0f0f1e', justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator color="#00d4aa" size="large" />
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={{ flex: 1, backgroundColor: '#0f0f1e' }}>
       <View style={{ paddingHorizontal: 24, paddingTop: 60, paddingBottom: 20, backgroundColor: '#12122a' }}>
@@ -315,7 +354,7 @@ export default function CreateScreen() {
             <Text style={{ color: 'white', fontSize: 18, fontWeight: '700', marginBottom: 16 }}>
               Stap 1 — Kies een club
             </Text>
-            {CLUBS.map((club) => (
+            {clubs.map((club) => (
               <TouchableOpacity
                 key={club.id}
                 onPress={() => { setSelectedClub(club); setStep(2); }}
@@ -400,7 +439,7 @@ export default function CreateScreen() {
               <ActivityIndicator color="#00d4aa" />
             ) : (
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 24 }}>
-                {TIME_SLOTS.map((time) => {
+                {timeSlots.map((time) => {
                   const isBooked = bookedSlots.includes(time);
                   const isSelected = selectedTime === time;
                   return (
@@ -469,6 +508,9 @@ export default function CreateScreen() {
               <RangeSlider
                 minVal={minLevel}
                 maxVal={maxLevel}
+                levelMin={levelMin}
+                levelMax={levelMax}
+                levelStep={levelStep}
                 onChange={(min, max) => { setMinLevel(min); setMaxLevel(max); }}
               />
             </View>
@@ -478,7 +520,7 @@ export default function CreateScreen() {
               Formaat
             </Text>
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 24 }}>
-              {['5v5', '7v7', '11v11'].map((f) => (
+              {formats.map((f) => (
                 <TouchableOpacity
                   key={f}
                   onPress={() => setFormat(f)}

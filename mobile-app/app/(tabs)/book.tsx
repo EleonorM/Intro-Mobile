@@ -1,17 +1,9 @@
 import { View, Text, ScrollView, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { useState, useEffect } from 'react';
-import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../config/firebase';
 import { Ionicons } from '@expo/vector-icons';
 
-const CLUBS = [
-  { id: '1', name: 'Sporthal Antwerpen', address: 'Antwerpen Centrum' },
-  { id: '2', name: 'Voetbalclub Berchem', address: 'Berchem, Antwerpen' },
-  { id: '3', name: 'FC Deurne', address: 'Deurne, Antwerpen' },
-  { id: '4', name: 'Sportcomplex Wilrijk', address: 'Wilrijk, Antwerpen' },
-];
-
-const TIME_SLOTS = ['17:00', '18:00', '19:00', '20:00', '21:00', '22:00'];
 const DAYS = ['Zo', 'Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dec'];
 
@@ -23,6 +15,33 @@ export default function BookScreen() {
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState(1);
+
+  // Data uit Firebase
+  const [clubs, setClubs] = useState<any[]>([]);
+  const [timeSlots, setTimeSlots] = useState<string[]>([]);
+  const [loadingConfig, setLoadingConfig] = useState(true);
+
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const clubsSnapshot = await getDocs(collection(db, 'clubs'));
+        const clubsList = clubsSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        clubsList.sort((a: any, b: any) => a.id.localeCompare(b.id));
+        setClubs(clubsList);
+
+        const configSnap = await getDoc(doc(db, 'appConfig', 'settings'));
+        if (configSnap.exists()) {
+          const cfg = configSnap.data();
+          setTimeSlots(cfg.timeSlots ?? []);
+        }
+      } catch (err: any) {
+        Alert.alert('Fout', 'Kon configuratie niet laden: ' + err.message);
+      } finally {
+        setLoadingConfig(false);
+      }
+    };
+    fetchConfig();
+  }, []);
 
   const getDates = () => {
     const dates = [];
@@ -88,6 +107,14 @@ export default function BookScreen() {
     setLoading(false);
   };
 
+  if (loadingConfig) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#0f0f1e', justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator color="#00d4aa" size="large" />
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={{ flex: 1, backgroundColor: '#0f0f1e' }}>
       <View style={{ paddingHorizontal: 24, paddingTop: 60, paddingBottom: 20, backgroundColor: '#12122a' }}>
@@ -119,7 +146,7 @@ export default function BookScreen() {
             <Text style={{ color: 'white', fontSize: 18, fontWeight: '700', marginBottom: 16 }}>
               Stap 1 — Kies een club
             </Text>
-            {CLUBS.map((club) => (
+            {clubs.map((club) => (
               <TouchableOpacity
                 key={club.id}
                 onPress={() => { setSelectedClub(club); setStep(2); }}
@@ -204,7 +231,7 @@ export default function BookScreen() {
               <ActivityIndicator color="#00d4aa" />
             ) : (
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 24 }}>
-                {TIME_SLOTS.map((time) => {
+                {timeSlots.map((time) => {
                   const isBooked = bookedSlots.includes(time);
                   const isSelected = selectedTime === time;
                   return (
