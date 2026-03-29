@@ -18,13 +18,14 @@
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useEffect, useState, useRef } from 'react';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function ProfileScreen() {
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [userLevel, setUserLevel] = useState<number>(1.5);
   const [myMatches, setMyMatches] = useState<any[]>([]);
   const [myBookings, setMyBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,10 +36,20 @@ export default function ProfileScreen() {
   const unsubscribeBookingsRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
 
       if (user) {
+        // Haal het niveau op. Als het document niet bestaat, maak het aan met 1.5.
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          setUserLevel(userSnap.data().level ?? 1.5);
+        } else {
+          await setDoc(userRef, { level: 1.5 }, { merge: true });
+          setUserLevel(1.5);
+        }
+
         // Luister naar wedstrijden van deze gebruiker
         const matchQuery = query(
           collection(db, 'matches'),
@@ -128,7 +139,7 @@ export default function ProfileScreen() {
             </Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
               <Ionicons name="bar-chart-outline" size={13} color="#00d4aa" />
-              <Text style={{ color: '#00d4aa', fontSize: 13, fontWeight: '600' }}>Niveau 1.5</Text>
+              <Text style={{ color: '#00d4aa', fontSize: 13, fontWeight: '600' }}>Niveau {userLevel.toFixed(1)}</Text>
             </View>
           </View>
         </View>

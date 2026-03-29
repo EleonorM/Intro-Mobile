@@ -18,10 +18,8 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
-  // KeyboardAvoidingView zorgt ervoor dat de inhoud omhoog schuift
-  // wanneer het toetsenbord opent, zodat de chat zichtbaar blijft.
   KeyboardAvoidingView,
-  Platform,    // Platform = weten of het iOS of Android is (gedrag verschilt)
+  Platform,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useEffect, useState, useRef } from 'react';
@@ -36,6 +34,8 @@ import {
   addDoc,
   orderBy,
   query,
+  getDoc,
+  setDoc,
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../../config/firebase';
@@ -55,10 +55,15 @@ export default function MatchDetail() {
 
   // State-variabelen: dit zijn "geheugenplaatsen" in de component.
   // Als ze veranderen, herlaadt React het scherm automatisch.
-  const [match, setMatch] = useState<any>(null);       // de wedstrijd data
-  const [messages, setMessages] = useState<any[]>([]);  // alle chatberichten
-  const [newMessage, setNewMessage] = useState('');     // het bericht dat de gebruiker typt
-  const [loading, setLoading] = useState(true);         // is de data al geladen?
+  const [match, setMatch] = useState<any>(null);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  // Resultaat invoeren
+  const [scoreA, setScoreA] = useState('');  // score van team A
+  const [scoreB, setScoreB] = useState('');  // score van team B
+  const [submittingResult, setSubmittingResult] = useState(false);
 
   // useRef geeft een "verwijzing" naar een echt DOM-element.
   // Hier gebruiken we het om de ScrollView te kunnen besturen (scrollen).
@@ -233,6 +238,74 @@ export default function MatchDetail() {
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated: true });
     }, 100);
+  };
+
+  // ── FUNCTIE: Resultaat invoeren + levels aanpassen ───────────────────────
+  const handleSubmitResult = async () => {
+    const goalsA = parseInt(scoreA);
+    const goalsB = parseInt(scoreB);
+
+    if (isNaN(goalsA) || isNaN(goalsB) || goalsA < 0 || goalsB < 0) {
+      Alert.alert('Fout', 'Vul geldige scores in (getal groter of gelijk aan 0).');
+      return;
+    }
+
+    setSubmittingResult(true);
+    try {
+      const players: string[] = match.players ?? [];
+      const half = Math.floor(players.length / 2);
+
+      // Team A = eerste helft spelers, Team B = tweede helft
+      const teamA = players.slice(0, half);
+      const teamB = players.slice(half);
+
+      // Bepaal wie gewonnen heeft
+      let winner: 'A' | 'B' | 'draw' = 'draw';
+      if (goalsA > goalsB) winner = 'A';
+      else if (goalsB > goalsA) winner = 'B';
+
+      // Pas niveau aan voor elke speler
+      // Winnaars +0.2, verliezers -0.1, gelijkspel geen verandering
+      for (const uid of players) {
+        const userRef = doc(db, 'users', uid);
+        const userSnap = await getDoc(userRef);
+
+        // Als de gebruiker nog geen document heeft, begin op 1.5
+        const currentLevel = userSnap.exists() ? (userSnap.data().level ?? 1.5) : 1.5;
+
+        let newLevel = currentLevel;
+        if (winner === 'draw') {
+          newLevel = currentLevel; // geen verandering bij gelijkspel
+        } else if (
+          (winner === 'A' && teamA.includes(uid)) ||
+          (winner === 'B' && teamB.includes(uid))
+        ) {
+          newLevel = Math.min(7.0, currentLevel + 0.2); // winnaar: +0.2
+        } else {
+          newLevel = Math.max(0.5, currentLevel - 0.1); // verliezer: -0.1
+        }
+
+        // Afronden op 1 decimaal (bv. 1.7000... → 1.7)
+        newLevel = Math.round(newLevel * 10) / 10;
+
+        // Sla het nieuwe niveau op (merge: true = aanmaken als het niet bestaat)
+        await setDoc(userRef, { level: newLevel }, { merge: true });
+      }
+
+      // Sla het resultaat op in de wedstrijd
+      await updateDoc(doc(db, 'matches', id as string), {
+        result: { scoreA: goalsA, scoreB: goalsB, winner },
+      });
+
+      const resultText = winner === 'draw'
+        ? `Gelijkspel ${goalsA}-${goalsB}`
+        : `Team ${winner === 'A' ? 'A' : 'B'} wint ${goalsA}-${goalsB}`;
+
+      Alert.alert('Resultaat opgeslagen', `${resultText}\n\nNiveaus zijn aangepast.`);
+    } catch (err: any) {
+      Alert.alert('Fout', err.message);
+    }
+    setSubmittingResult(false);
   };
 
   // Laadscherm terwijl Firebase de data ophaalt
@@ -416,6 +489,111 @@ export default function MatchDetail() {
           )}
         </View>
       </View>
+
+      {/* ── RESULTAAT ────────────────────────────────────────────────────── */}
+      {/* Toon resultaat-sectie als de wedstrijd voorbij is én competitief */}
+      {isPast && match?.isCompetitive && (
+        <View style={{
+          backgroundColor: '#12122a',
+          paddingHorizontal: 20,
+          paddingVertical: 14,
+          borderBottomWidth: 1,
+          borderBottomColor: '#1e1e3a',
+        }}>
+          {match?.result ? (
+            // Resultaat is al ingevoerd: toon het
+            <View>
+              <Text style={{ color: '#888', fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 8 }}>
+                Eindresultaat
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Text style={{ color: 'white', fontSize: 22, fontWeight: '700' }}>
+                  {match.result.scoreA} – {match.result.scoreB}
+                </Text>
+                <View style={{ backgroundColor: '#003d30', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, borderWidth: 1, borderColor: '#00d4aa' }}>
+                  <Text style={{ color: '#00d4aa', fontSize: 12, fontWeight: '700' }}>
+                    {match.result.winner === 'draw' ? 'Gelijkspel' : `Team ${match.result.winner} wint`}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          ) : isCreator ? (
+            // Maker kan het resultaat invoeren
+            <View>
+              <Text style={{ color: '#888', fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 10 }}>
+                Resultaat invoeren
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#666', fontSize: 11, marginBottom: 4 }}>Team A</Text>
+                  <TextInput
+                    value={scoreA}
+                    onChangeText={setScoreA}
+                    keyboardType="number-pad"
+                    placeholder="0"
+                    placeholderTextColor="#333"
+                    style={{
+                      backgroundColor: '#1a1a2e',
+                      color: 'white',
+                      padding: 10,
+                      borderRadius: 10,
+                      textAlign: 'center',
+                      fontSize: 20,
+                      fontWeight: '700',
+                      borderWidth: 1,
+                      borderColor: '#1e1e3a',
+                    }}
+                  />
+                </View>
+                <Text style={{ color: '#555', fontSize: 18, fontWeight: '700', marginTop: 18 }}>–</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#666', fontSize: 11, marginBottom: 4 }}>Team B</Text>
+                  <TextInput
+                    value={scoreB}
+                    onChangeText={setScoreB}
+                    keyboardType="number-pad"
+                    placeholder="0"
+                    placeholderTextColor="#333"
+                    style={{
+                      backgroundColor: '#1a1a2e',
+                      color: 'white',
+                      padding: 10,
+                      borderRadius: 10,
+                      textAlign: 'center',
+                      fontSize: 20,
+                      fontWeight: '700',
+                      borderWidth: 1,
+                      borderColor: '#1e1e3a',
+                    }}
+                  />
+                </View>
+                <TouchableOpacity
+                  onPress={handleSubmitResult}
+                  disabled={submittingResult}
+                  style={{
+                    backgroundColor: submittingResult ? '#333' : '#00d4aa',
+                    paddingHorizontal: 16,
+                    paddingVertical: 10,
+                    borderRadius: 10,
+                    marginTop: 18,
+                  }}
+                >
+                  {submittingResult
+                    ? <ActivityIndicator color="white" size="small" />
+                    : <Text style={{ color: 'white', fontWeight: '700' }}>Opslaan</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+              <Text style={{ color: '#444', fontSize: 11, marginTop: 8 }}>
+                Team A = speler 1–{Math.floor((match?.players?.length ?? 0) / 2)} · Team B = de rest
+              </Text>
+            </View>
+          ) : (
+            // Deelnemer maar niet de maker: wacht op resultaat
+            <Text style={{ color: '#555', fontSize: 13 }}>Wachten op resultaat van de maker...</Text>
+          )}
+        </View>
+      )}
 
       {/* ── CHAT ─────────────────────────────────────────────────────────── */}
       {/* ScrollView met ref zodat we er programmatisch naartoe kunnen scrollen */}

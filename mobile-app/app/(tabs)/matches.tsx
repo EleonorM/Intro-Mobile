@@ -11,6 +11,14 @@ type SortKey = 'datum' | 'spelers';
 type FilterStatus = 'alle' | 'open' | 'vol';
 type FilterFormat = 'alle' | '5v5' | '7v7' | '11v11';
 type FilterType = 'alle' | 'competitief' | 'vriendelijk';
+type FilterLevel = 'alle' | 'beginner' | 'gemiddeld' | 'gevorderd';
+
+// Geeft true als de wedstrijddatum + tijdstip al voorbij zijn
+function isMatchExpired(date: string, time: string): boolean {
+  const [day, month, year] = date.split('/').map(Number);
+  const [hours, minutes] = time.split(':').map(Number);
+  return new Date(year, month - 1, day, hours, minutes) < new Date();
+}
 
 // Geeft true als de wedstrijddatum én het uur al voorbij zijn.
 // Datumformaat in Firestore: "DD/MM/YYYY", tijdformaat: "HH:MM"
@@ -61,6 +69,7 @@ export default function MatchesScreen() {
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('alle');
   const [filterFormat, setFilterFormat] = useState<FilterFormat>('alle');
   const [filterType, setFilterType] = useState<FilterType>('alle');
+  const [filterLevel, setFilterLevel] = useState<FilterLevel>('alle');
 
   // Bewaar de stop-functie van onSnapshot in een ref.
   // Zo kunnen we de luisteraar stoppen vóórdat de gebruiker uitlogt,
@@ -78,7 +87,7 @@ export default function MatchesScreen() {
 
           snapshot.docs.forEach((d) => {
             const match = { id: d.id, ...d.data() } as any;
-            if (isExpired(match.date, match.time)) {
+            if (isMatchExpired(match.date, match.time)) {
               // Verwijder verlopen wedstrijden uit Firebase
               deleteDoc(doc(db, 'matches', d.id));
             } else {
@@ -126,6 +135,15 @@ export default function MatchesScreen() {
       result = result.filter((m) => !m.isCompetitive);
     }
 
+    // Niveau filter: op basis van het minimum niveau van de wedstrijd
+    if (filterLevel === 'beginner') {
+      result = result.filter((m) => m.minLevel < 2.5);
+    } else if (filterLevel === 'gemiddeld') {
+      result = result.filter((m) => m.minLevel >= 2.5 && m.minLevel < 4.5);
+    } else if (filterLevel === 'gevorderd') {
+      result = result.filter((m) => m.minLevel >= 4.5);
+    }
+
     if (sortKey === 'spelers') {
       result.sort((a, b) => {
         const aFree = (a.maxPlayers ?? 0) - (a.players?.length ?? 0);
@@ -142,6 +160,7 @@ export default function MatchesScreen() {
     filterStatus !== 'alle',
     filterFormat !== 'alle',
     filterType !== 'alle',
+    filterLevel !== 'alle',
     sortKey !== 'datum',
   ].filter(Boolean).length;
 
@@ -149,6 +168,7 @@ export default function MatchesScreen() {
     setFilterStatus('alle');
     setFilterFormat('alle');
     setFilterType('alle');
+    setFilterLevel('alle');
     setSortKey('datum');
   };
 
@@ -228,7 +248,7 @@ export default function MatchesScreen() {
           </View>
 
           {/* Type */}
-          <View style={{ paddingHorizontal: 24, marginBottom: 4 }}>
+          <View style={{ paddingHorizontal: 24, marginBottom: 12 }}>
             <Text style={{ color: '#555', fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 8 }}>
               Type
             </Text>
@@ -236,6 +256,19 @@ export default function MatchesScreen() {
               <FilterChip label="Alle" active={filterType === 'alle'} onPress={() => setFilterType('alle')} />
               <FilterChip label="Competitief" active={filterType === 'competitief'} onPress={() => setFilterType('competitief')} />
               <FilterChip label="Vriendelijk" active={filterType === 'vriendelijk'} onPress={() => setFilterType('vriendelijk')} />
+            </ScrollView>
+          </View>
+
+          {/* Niveau */}
+          <View style={{ paddingHorizontal: 24, marginBottom: 4 }}>
+            <Text style={{ color: '#555', fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 8 }}>
+              Niveau
+            </Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <FilterChip label="Alle" active={filterLevel === 'alle'} onPress={() => setFilterLevel('alle')} />
+              <FilterChip label="Beginner (0.5–2.5)" active={filterLevel === 'beginner'} onPress={() => setFilterLevel('beginner')} />
+              <FilterChip label="Gemiddeld (2.5–4.5)" active={filterLevel === 'gemiddeld'} onPress={() => setFilterLevel('gemiddeld')} />
+              <FilterChip label="Gevorderd (4.5–7.0)" active={filterLevel === 'gevorderd'} onPress={() => setFilterLevel('gevorderd')} />
             </ScrollView>
           </View>
 
