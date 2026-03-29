@@ -135,13 +135,15 @@ export default function MatchesScreen() {
       result = result.filter((m) => !m.isCompetitive);
     }
 
-    // Niveau filter: op basis van het minimum niveau van de wedstrijd
+    // Niveau filter: toon wedstrijden waarvan de range overlapt met de categorie.
+    // Overlap = de range van de wedstrijd begint vóór het einde van de categorie
+    //           én eindigt ná het begin van de categorie.
     if (filterLevel === 'beginner') {
-      result = result.filter((m) => m.minLevel < 2.5);
+      result = result.filter((m) => m.minLevel < 2.5 && m.maxLevel > 0.5);
     } else if (filterLevel === 'gemiddeld') {
-      result = result.filter((m) => m.minLevel >= 2.5 && m.minLevel < 4.5);
+      result = result.filter((m) => m.minLevel < 4.5 && m.maxLevel > 2.5);
     } else if (filterLevel === 'gevorderd') {
-      result = result.filter((m) => m.minLevel >= 4.5);
+      result = result.filter((m) => m.minLevel < 7.0 && m.maxLevel > 4.5);
     }
 
     if (sortKey === 'spelers') {

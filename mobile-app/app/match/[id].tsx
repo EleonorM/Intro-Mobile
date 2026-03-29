@@ -140,8 +140,13 @@ export default function MatchDetail() {
           onPress: async () => {
             // arrayUnion voegt de uid van de gebruiker toe aan de players-array
             // zonder de andere spelers te verwijderen
+            // Bereken of de wedstrijd vol is na inschrijving (+1 voor de nieuwe speler)
+            const newPlayerCount = (match.players?.length ?? 0) + 1;
+            const isFull = newPlayerCount >= match.maxPlayers;
+
             await updateDoc(doc(db, 'matches', id as string), {
               players: arrayUnion(user.uid),
+              status: isFull ? 'vol' : 'open',
             });
             // Voeg een systeem-bericht toe in de chat zodat anderen weten wie er bijkomt
             await addDoc(collection(db, 'matches', id as string, 'messages'), {
@@ -182,6 +187,7 @@ export default function MatchDetail() {
             // arrayRemove verwijdert de uid van de gebruiker uit de players-array
             await updateDoc(doc(db, 'matches', id as string), {
               players: arrayRemove(user.uid),
+              status: 'open', // altijd open als iemand uitschrijft
             });
             // Voeg een systeem-bericht toe in de chat
             await addDoc(collection(db, 'matches', id as string, 'messages'), {
