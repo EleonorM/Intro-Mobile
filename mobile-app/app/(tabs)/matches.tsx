@@ -88,8 +88,11 @@ export default function MatchesScreen() {
           snapshot.docs.forEach((d) => {
             const match = { id: d.id, ...d.data() } as any;
             if (isMatchExpired(match.date, match.time)) {
-              // Verwijder verlopen wedstrijden uit Firebase
-              deleteDoc(doc(db, 'matches', d.id));
+              // Alleen de eigen verlopen wedstrijden verwijderen.
+              // Andere wedstrijden mag je niet verwijderen (permission-denied).
+              if (match.createdBy === user.uid) {
+                deleteDoc(doc(db, 'matches', d.id));
+              }
             } else {
               active.push(match);
             }
